@@ -6,3 +6,4 @@ statsmodels
 fpdf
 google-generativeai
 openpyxl
+openai
