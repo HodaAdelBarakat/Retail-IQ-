@@ -100,81 +100,94 @@ def calculate_tax_risk(df: pd.DataFrame) -> pd.DataFrame:
     df_tax['Tax_Risk_Level'] = pd.cut(df_tax['Tax_Risk_Score'], bins=[-1, 35, 65, 5000], labels=['Low', 'Medium', 'High'])
     return df_tax
 
+def calculate_kpis(df: pd.DataFrame) -> dict:
+    """حساب مؤشرات الأداء المالية والتكاليف"""
+    total_sales  = float(df["Sales"].sum())
+    total_profit = float(df["Profit"].sum())
+    total_orders = int(df["Order ID"].nunique()) if "Order ID" in df.columns else len(df)
+
+    # حساب التكلفة الإجمالية ونسبتها (المعادلات العلمية)
+    total_cost = total_sales - total_profit
+    cost_to_sales_ratio = safe_divide(total_cost, total_sales) * 100
+
+    if "Order Date" in df.columns:
+        date_range_days = max((df["Order Date"].max() - df["Order Date"].min()).days, 1)
+        order_velocity  = round(safe_divide(total_orders, date_range_days), 2)
+    else:
+        order_velocity = 0.0
+
+    return {
+        "Total Sales": total_sales,
+        "Total Profit": total_profit,
+        "Total Cost (COGS)": total_cost,
+        "Cost to Sales Ratio": cost_to_sales_ratio,
+        "Profit Margin": safe_divide(total_profit, total_sales),
+        "Average Order Value": safe_divide(total_sales, total_orders),
+        "Total Orders": total_orders,
+        "Order Velocity": order_velocity,
+        "Total VAT": float(df["VAT_Amount"].sum()) if "VAT_Amount" in df.columns else 0.0,
+        "Total Income Tax": float(df["Income_Tax"].sum()) if "Income_Tax" in df.columns else 0.0,
+        "Net Profit After Tax": float(df["Net_Profit_AfterTax"].sum()) if "Net_Profit_AfterTax" in df.columns else 0.0,
+        "Tax Suspicious Count": int(df["Tax_Suspicious"].sum()) if "Tax_Suspicious" in df.columns else 0,
+    }
+
 def get_decisions(row) -> dict:
-    """
-    محرك قرارات خبير (Expert System) شامل يحاكي العقل التحليلي للمدير المالي.
-    يغطي: الضرائب، النزيف، الفرص، المخزون الميت، التكاليف المفقودة، وفخ التغليف.
-    """
+    """محرك قرارات خبير (Expert System) شامل - قواعد علمية وديناميكية"""
     profit = float(row.get("Profit", 0))
     sales = float(row.get("Sales", 0))
     discount = float(row.get("Discount", 0))
     qty = float(row.get("Quantity", 1))
     profit_z = float(row.get("profit_z", 0))
     tax_suspicious = row.get("Tax_Suspicious", False)
-
     margin = profit / sales if sales > 0 else 0
-
     rec_en, rec_ar = [], []
 
-    # 1. الامتثال الضريبي (أولوية قصوى)
+    # 1. الامتثال الضريبي
     if tax_suspicious:
-        rec_ar.append("⚖️ إحالة للامتثال الضريبي: تلاعب محتمل (خصم وهمي لتوليد خسارة دفترية).")
-        rec_en.append("⚖️ Tax Compliance Alert: Potential manipulation (phantom discount).")
+        rec_ar.append(f"⚖️ إحالة للامتثال الضريبي: تلاعب محتمل (خصم {discount*100:.0f}% لتوليد خسارة دفترية بقيمة {abs(profit):,.2f}$).")
+        rec_en.append(f"⚖️ Tax Compliance Alert: Potential manipulation (phantom {discount*100:.0f}% discount causing ${abs(profit):,.2f} loss).")
 
-    # 2. أخطاء الإدخال القاتلة والتكاليف المفقودة (Missing COGS)
+    # 2. أخطاء الإدخال
     if margin > 0.85 and sales > 100:
-        rec_ar.append("🚨 ربح وهمي: الهامش يتجاوز 85%، يرجى مراجعة الفاتورة، غالباً لم يتم تسجيل تكلفة البضاعة (COGS).")
-        rec_en.append("🚨 Phantom Profit: Margin > 85%. Likely missing Cost of Goods Sold (COGS) data.")
-    elif profit_z < -3 and profit > 0:
-        rec_ar.append("🚨 انحراف مالي حاد: مراجعة الفاتورة يدوياً لاحتمال وجود خطأ صفري (Typo) أدى لتقزيم الربح.")
-        rec_en.append("🚨 Severe Financial Deviation: Review for data entry typo shrinking the profit.")
+        rec_ar.append(f"🚨 ربح وهمي: الهامش يتجاوز {margin*100:.0f}% (مكسب {profit:,.2f}$). يرجى المراجعة، غالباً لم يتم تسجيل التكلفة (COGS).")
+        rec_en.append(f"🚨 Phantom Profit: Margin is {margin*100:.0f}% (Profit: ${profit:,.2f}). Likely missing COGS data.")
 
-    # 3. تحليل الخسائر والنزيف المالي
+    # 3. تحليل الخسائر (النزيف)
     if profit < 0:
-        if qty > 20 and margin > -0.05: # خسارة طفيفة مع كمية كبيرة (الطُعم)
-            rec_ar.append("🤔 استراتيجية الطُعم: خسارة طفيفة مع حجم مبيعات ضخم. يرجى التأكد أن هذا مقصود كحملة تسويقية (Loss Leader).")
-            rec_en.append("🤔 Loss Leader Check: High volume with slight loss. Verify if this is an intentional marketing strategy.")
-        elif discount >= 0.15:
-            rec_ar.append(f"✂️ إلغاء الخصم ({discount*100:.0f}%): الخصم يأكل رأس المال التشغيلي وليس الهامش فقط.")
-            rec_en.append(f"✂️ Revoke {discount*100:.0f}% Discount: It's eroding operational capital.")
+        if discount >= 0.15:
+            rec_ar.append(f"✂️ إلغاء الخصم فوراً ({discount*100:.0f}%): هذا الخصم تسبب في نزيف مباشر بقيمة {abs(profit):,.2f}$ من رأس المال.")
+            rec_en.append(f"✂️ Revoke {discount*100:.0f}% Discount: It caused a direct leakage of ${abs(profit):,.2f}.")
         elif sales > 500:
-            rec_ar.append("🛑 إيقاف البيع مؤقتاً: اقتصاديات وحدة سلبية. المزيد من المبيعات يعني إفلاس أسرع.")
-            rec_en.append("🛑 Halt Sales: Negative unit economics. Selling more means bleeding faster.")
+            rec_ar.append(f"🛑 إيقاف البيع مؤقتاً: بيع بقيمة {sales:,.2f}$ أدى لخسارة {abs(profit):,.2f}$. المزيد من المبيعات يعني إفلاس أسرع.")
+            rec_en.append(f"🛑 Halt Sales: Volume of ${sales:,.2f} resulted in ${abs(profit):,.2f} loss.")
         else:
-            rec_ar.append("📉 تدقيق التكاليف (COGS): خسارة بدون خصم تعني أن تكلفة الشراء/الشحن تجاوزت سعر البيع.")
-            rec_en.append("📉 COGS Audit: Loss without discount means sourcing/shipping costs exceed retail price.")
+            rec_ar.append(f"📉 تدقيق التكاليف: الفاتورة خسرانة {abs(profit):,.2f}$ بدون خصومات! تكلفة التوريد تتجاوز سعر البيع.")
+            rec_en.append(f"📉 COGS Audit: Loss of ${abs(profit):,.2f} with NO discount. Sourcing costs exceed price.")
 
-    # 4. المخزون الميت (Dead Inventory) وفخ المعاملات الصغيرة
+    # 4. القواعد الاحترافية (Micro-transactions & Cannibalization)
     if profit > 0:
-        if discount >= 0.40 and qty <= 2:
-            rec_ar.append("🗑️ مخزون ميت: خصم ضخم (>40%) ولا يوجد سحب. توقف عن حرق العلامة التجارية وقم بتصفية المنتج.")
-            rec_en.append("🗑️ Dead Inventory: Massive discount (>40%) but no volume. Liquidate immediately.")
-        elif qty > 50 and sales < 50:
-            rec_ar.append("📦 فخ التشغيل: كمية ضخمة بإيراد هزيل. تكلفة التغليف والشحن ستتجاوز قيمة الفاتورة.")
-            rec_en.append("📦 Operational Trap: High qty, micro-revenue. Packaging/shipping will exceed item value.")
+        if sales > 0 and sales < 5 and qty == 1:
+            rec_ar.append(f"💳 فخ رسوم الدفع: مبيعات دقيقة ({sales:,.2f}$). رسوم الفيزا ستبتلع الربح. ادمج المنتج في عروض (Bundles).")
+            rec_en.append(f"💳 Micro-transaction Trap: ${sales:,.2f} sale. Fees will eat the profit. Bundle this item.")
+        elif discount >= 0.20 and margin >= 0.30:
+            rec_ar.append(f"💸 خصم مهدر: المنتج قوي ويحقق هامش {margin*100:.0f}% رغم وجود خصم {discount*100:.0f}%. قم بإلغاء الخصم فوراً.")
+            rec_en.append(f"💸 Unjustified Discount: Margin is {margin*100:.0f}% despite a {discount*100:.0f}% discount.")
+        elif discount >= 0.40 and qty <= 2:
+            rec_ar.append(f"🗑️ مخزون ميت: خصم ضخم ({discount*100:.0f}%) لبيع {qty:.0f} قطع فقط. قم بتصفية المنتج فوراً.")
+            rec_en.append(f"🗑️ Dead Inventory: Massive {discount*100:.0f}% discount for few units.")
 
-    # 5. الفرص الضائعة وتعظيم الأرباح
-    if margin > 0.40 and qty < 5 and profit > 0:
-        rec_ar.append("🚀 فرصة نمو: هامش ربح ممتاز (>40%) بكمية قليلة. ضاعف ميزانية التسويق لهذا المنتج فوراً.")
-        rec_en.append("🚀 Growth Opportunity: Excellent margin (>40%) but low volume. Double marketing spend here.")
-    elif qty > 15 and margin < 0.05 and profit > 0:
-        rec_ar.append("⚠️ بيع جملة غير مجدي: إجهاد للتشغيل بهامش (<5%). يجب إعادة التفاوض مع المورد.")
-        rec_en.append("⚠️ Inefficient Bulk Sale: High volume but <5% margin. Renegotiate with supplier.")
+    # 5. الفرص الضائعة
+    if margin > 0.40 and qty < 5 and profit > 0 and discount < 0.20:
+        rec_ar.append(f"🚀 فرصة نمو: هامش ممتاز ({margin*100:.0f}%) حقق {profit:,.2f}$ من {qty:.0f} قطع فقط. ضاعف ميزانية التسويق.")
+        rec_en.append(f"🚀 Growth Opportunity: Excellent {margin*100:.0f}% margin. Double marketing spend.")
 
-    # 6. شبكة الأمان (Fallback)
+    # 6. Fallback
     if not rec_ar:
-        if profit > 0 and margin >= 0.15:
-            rec_ar.append("✅ أداء صحي ومستقر: الحفاظ على سياسة التسعير الحالية.")
-            rec_en.append("✅ Healthy & Stable: Maintain current pricing strategy.")
-        elif profit > 0:
-            rec_ar.append("👁️ أداء ضعيف: الهامش منخفض، راقب عن كثب.")
-            rec_en.append("👁️ Underperforming: Low margin, monitor closely.")
+        rec_ar.append(f"✅ أداء مستقر: هامش ({margin*100:.0f}%) وربح {profit:,.2f}$. حافظ على سياسة التسعير.")
+        rec_en.append(f"✅ Healthy: Stable {margin*100:.0f}% margin. Keep current pricing.")
 
-    return {
-        "en": " | ".join(rec_en),
-        "ar": " | ".join(rec_ar)
-    }
-
+    return {"en": " | ".join(rec_en), "ar": " | ".join(rec_ar)}
+    
 def run_full_ai_analysis(df: pd.DataFrame) -> dict:
     if df.empty: return {}
     monthly_sales, forecast_df = run_arima_forecast(df)
