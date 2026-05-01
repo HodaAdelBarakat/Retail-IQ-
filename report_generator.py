@@ -152,9 +152,7 @@ def create_pdf_report(kpis, executive_orders_en, financial_impact, anomalies, fo
     # --------------------------------------------------------
     # 4. Administrative Action Plan
     # --------------------------------------------------------
-   if pdf.get_y() > 220: 
-        pdf.add_page()
-        
+   pdf.add_page()
     pdf.section_title("4. Administrative Action Plan")
     
     pdf.set_font("Helvetica", "B", 11)
